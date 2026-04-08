@@ -10,3 +10,16 @@
 /httpRequests/
 .idea/
 .DS_Store
+
+# Python
+venv/
+env/
+*.pyc
+__pycache__/
+
+# LocalStack
+localstack-data/
+
+# Dashboard output
+aws_dashboard_exports/
+aws_dashboard_debug.log

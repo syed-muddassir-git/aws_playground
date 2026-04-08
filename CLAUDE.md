@@ -4,84 +4,109 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AWS Multi-Account Dashboard - An interactive TUI (Terminal User Interface) application for inventorying and searching AWS resources across multiple accounts in an AWS Organization. Uses cross-account IAM role assumption to access child accounts from a management account.
+AWS Multi-Account Dashboard - Interactive TUI application for inventorying and searching AWS resources across multiple accounts in an AWS Organization. Supports both real AWS and LocalStack (free local testing).
+
+**Two versions available:**
+- `aws_dashboard3.py` - Enhanced version with debug logging, better error handling, and startup diagnostics (recommended)
+- `aws_dashboard.py` - Original version with basic functionality
 
 ## Running the Application
 
-**Primary script (enhanced version):**
+**With LocalStack (free):**
 ```bash
+docker-compose -f docker-compose.localstack.yml up -d
+./setup_localstack_data.sh  # Create sample data
+./run_with_localstack.sh
+```
+
+**With real AWS:**
+```bash
+source venv/bin/activate
 python3 aws_dashboard3.py
-```
-
-**Override the assumed role name:**
-```bash
-python3 aws_dashboard3.py --role YourRoleName
-```
-
-**Legacy version:**
-```bash
-python3 aws_dashboard.py
+python3 aws_dashboard3.py --role CustomRoleName  # Override default role
 ```
 
 **Prerequisites:**
-- AWS credentials configured (`aws configure` or environment variables)
-- Must run from AWS Organization management account for multi-account access
-- IAM role must exist in child accounts with required permissions
+- Virtual environment activated with boto3 installed
+- AWS credentials configured (real AWS) or LocalStack running (local testing)
 
-## Key Architecture
+## Architecture
 
-### Cross-Account Access Pattern
+### Cross-Account Access
 - Discovers accounts via `organizations:ListAccounts`
-- Assumes role in each child account using `sts:AssumeRole`
-- Default role: `Operative-FullAccess` (configurable via `--role` flag)
-- Account-specific role overrides defined in `ACCOUNT_ROLE_OVERRIDES` dict (aws_dashboard3.py only)
+- Assumes IAM role in each child account using `sts:AssumeRole`
+- Default role: `Operative-FullAccess` (override via `--role` or `ACCOUNT_ROLE_OVERRIDES`)
+- Falls back to single-account mode if Organizations unavailable
 
-### Resource Inventory Approach
-- Regions fetched once per account and cached
-- Pagination handled via boto3 paginators for all resources
-- S3 treated as global (single ListBuckets call per account)
-- EC2, RDS, and Load Balancers iterated across all enabled regions
+### Resource Discovery
+- Regions fetched once per account, then cached
+- S3 treated as global (one ListBuckets call per account)
+- EC2, RDS, Load Balancers iterated across all enabled regions
+- All API calls use boto3 paginators to avoid missing resources
 
-### TUI Structure
+### TUI Implementation
 - Built with Python `curses` library
-- Color-coded display (cyan headers, green for running resources, red for errors)
-- Keyboard navigation: arrow keys, Enter, Q/ESC, S for CSV export
-- Three main components: menu system, scrollable pager, input boxes
+- Must run in actual terminal (not programmatically testable)
+- Color-coded display: cyan headers, green for active resources, red for errors
+- Keyboard-only navigation (no mouse support)
 
 ### Error Handling
-- `aws_dashboard3.py` has enhanced error handling with debug logging
-- Role assumption failures tracked and displayed to user
-- Graceful degradation: falls back to current account if Organizations access fails
-- All AWS API errors caught and logged to `~/aws_dashboard_debug.log`
+- Role assumption failures tracked in `_role_failures` list and displayed to user
+- Graceful degradation: continues with accessible accounts even if some fail
+- All errors logged to `~/aws_dashboard_debug.log` with timestamps
+- AWS API exceptions caught using `AWSError` tuple
 
-## File Differences
+## LocalStack Integration
 
-- **aws_dashboard.py**: Original implementation with basic error handling
-- **aws_dashboard3.py**: Enhanced version with:
-  - Debug logging to `~/aws_dashboard_debug.log`
-  - Account-specific role override support via `ACCOUNT_ROLE_OVERRIDES`
-  - Better error messages showing which accounts were skipped
-  - Startup diagnostic screen showing loaded accounts
-  - Comprehensive exception handling for network errors
+LocalStack support is **completely isolated** from main implementation via:
+- `localstack_config.py` - Patches boto3 client methods to inject LocalStack endpoint
+- `run_with_localstack.sh` - Wrapper script that activates venv and runs config wrapper
+- No changes to `aws_dashboard3.py` required
 
-## Export Functionality
+**How it works:**
+1. `localstack_config.py` monkey-patches `boto3.client()` and `boto3.Session.client()`
+2. Injects `endpoint_url=http://localhost:4566` into all AWS API calls
+3. Loads and executes `aws_dashboard3.py` with patched boto3
 
-CSV exports saved to `~/aws_dashboard_exports/` with timestamp:
-- Format: `{resource_type}_inventory_{YYYY-MM-DD_HH-MM-SS}.csv`
-- Example: `ec2_inventory_2026-04-08_14-30-15.csv`
+**Limitations:**
+- LocalStack free tier doesn't support AWS Organizations (dashboard falls back to single account)
+- Only basic services available: EC2, S3, RDS, ELB, STS
+- Data is not persistent across container restarts
 
-## API Call Efficiency
+## File Structure
 
-Operations are optimized to minimize AWS API calls:
-- Account discovery: 1 call (organizations:ListAccounts)
+- `aws_dashboard3.py` - Main dashboard (never modify for LocalStack compatibility)
+- `localstack_config.py` - LocalStack boto3 patching wrapper
+- `run_with_localstack.sh` - LocalStack launcher
+- `docker-compose.localstack.yml` - LocalStack Docker configuration
+- `setup_localstack_data.sh` - Creates sample EC2/S3/RDS resources in LocalStack
+
+## Key Configuration Points
+
+**Account-specific role overrides** (`ACCOUNT_ROLE_OVERRIDES` dict):
+- Maps AWS account IDs to custom IAM role names
+- Overrides `ROLE_NAME` default for specific accounts
+
+**EC2 tag collection** (`EC2_TAGS` list):
+- Defines which EC2 tags to extract during inventory
+- Affects both inventory display and CSV exports
+
+**Export locations:**
+- CSV files: `~/aws_dashboard_exports/`
+- Debug log: `~/aws_dashboard_debug.log`
+
+## API Call Optimization
+
+The dashboard minimizes AWS API usage:
+- Account discovery: 1 call (`organizations:ListAccounts`)
 - Per account: 1 role assumption + 1 region discovery
 - Per region per account: 1 call per resource type (EC2/RDS/LB)
-- S3: 1 ListBuckets + 1 GetBucketLocation per bucket
+- S3: 1 `ListBuckets` + 1 `GetBucketLocation` per bucket
 - Search operations filter at API level to reduce data transfer
 
-## Customization Points
+## Important Notes
 
-**EC2 Tags** (`EC2_TAGS` list): Defines which EC2 tags to collect during inventory
-**Role Configuration**: Modify `ROLE_NAME` or `ACCOUNT_ROLE_OVERRIDES` for custom IAM role assumptions
-**Color Scheme**: `init_colors()` function defines curses color pairs for TUI elements
-**Export Directory**: Change `RESULTS_DIR` to customize CSV export location
+- The TUI uses curses which requires a real terminal - cannot be tested programmatically
+- When modifying LocalStack support, keep changes isolated to wrapper scripts
+- The dashboard handles Organizations API failures gracefully (common in single-account AWS or LocalStack)
+- Debug logging is always enabled in aws_dashboard3.py - check `~/aws_dashboard_debug.log` for troubleshooting

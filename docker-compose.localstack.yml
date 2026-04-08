@@ -1,0 +1,12 @@
+services:
+  localstack:
+    image: localstack/localstack:3.8.1
+    container_name: aws_dashboard_localstack
+    ports:
+      - "4566:4566"  # LocalStack gateway
+    environment:
+      - SERVICES=sts,ec2,s3,rds,elbv2,elb,iam
+      - DEBUG=0
+      - LOCALSTACK_HOST=localhost:4566
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
